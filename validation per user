@@ -1,79 +1,129 @@
-# FIREFOX INSTALLATION CHECK V1.5
+# ============================================================
+# FIREFOX INSTALLATION CHECK V1.6
 # Windows PowerShell 5.1
-# Lecture seule - Copier/coller direct
+# Windows 10 / 11 / Server 2016-2025
+# Copier-coller direct
+# ============================================================
+# Lecture seule pour Firefox et le registre
+# Rapport : C:\Install\Firefox\Firefox-Check.txt
+# ============================================================
 
 & {
 
-    $ErrorActionPreference = 'Continue'
-    $Results = @()
+$ErrorActionPreference = 'Continue'
 
-    Write-Host ''
-    Write-Host '===== FIREFOX INSTALLATION CHECK V1.5 =====' -ForegroundColor Cyan
+$Version = '1.6'
+$ReportDir = 'C:\Install\Firefox'
+$ReportFile = Join-Path $ReportDir 'Firefox-Check.txt'
 
-    # 1 - PER MACHINE FILES
+$Results = New-Object System.Collections.ArrayList
+$Warnings = New-Object System.Collections.ArrayList
 
-    Write-Host ''
-    Write-Host '[1] PER MACHINE - FILES' -ForegroundColor Yellow
+Write-Host ''
+Write-Host '==================================================' -ForegroundColor Cyan
+Write-Host '          FIREFOX INSTALLATION CHECK V1.6' -ForegroundColor Cyan
+Write-Host '==================================================' -ForegroundColor Cyan
 
-    $MachinePaths = @(
-        'C:\Program Files\Mozilla Firefox\firefox.exe'
-        'C:\Program Files (x86)\Mozilla Firefox\firefox.exe'
+# ============================================================
+# FUNCTIONS
+# ============================================================
+
+function Add-Result {
+    param(
+        [string]$Type,
+        [string]$Source,
+        [string]$Version,
+        [string]$Status,
+        [string]$Location,
+        [string]$Details
     )
 
-    foreach ($Path in $MachinePaths) {
-        if (Test-Path -LiteralPath $Path) {
-            $File = Get-Item -LiteralPath $Path
-            $Results += [PSCustomObject]@{
-                Type = 'MACHINE'
-                Source = 'FILE'
-                Version = $File.VersionInfo.ProductVersion
-                Location = $Path
-            }
-            Write-Host 'FOUND:' $Path -ForegroundColor Green
-        }
+    $Item = [PSCustomObject]@{
+        Type = $Type
+        Source = $Source
+        Version = $Version
+        Status = $Status
+        Location = $Location
+        Details = $Details
     }
 
-    # 2 - PER USER FILES
+    [void]$Results.Add($Item)
+}
 
-    Write-Host ''
-    Write-Host '[2] PER USER - FILES' -ForegroundColor Yellow
+function Get-ExeVersion {
+    param([string]$Path)
 
-    $ProfileRoot = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList'
+    try {
+        $Item = Get-Item -LiteralPath $Path -ErrorAction Stop
+        $Value = $Item.VersionInfo.ProductVersion
 
-    $Profiles = @()
-
-    foreach ($Key in (Get-ChildItem -LiteralPath $ProfileRoot -ErrorAction SilentlyContinue)) {
-        $Info = Get-ItemProperty -LiteralPath $Key.PSPath -ErrorAction SilentlyContinue
-
-        if ($null -ne $Info) {
-            if ($Info.ProfileImagePath) {
-                $Profile = [Environment]::ExpandEnvironmentVariables($Info.ProfileImagePath)
-                $Profiles += $Profile
-            }
+        if ([string]::IsNullOrWhiteSpace($Value)) {
+            $Value = $Item.VersionInfo.FileVersion
         }
+
+        if ([string]::IsNullOrWhiteSpace($Value)) {
+            return 'UNKNOWN'
+        }
+
+        return $Value
+    }
+    catch {
+        return 'UNKNOWN'
+    }
+}
+
+function Check-UninstallRegistry {
+    param(
+        [string]$Root,
+        [string]$Type,
+        [string]$ProfilePath
+    )
+
+    if (-not (Test-Path -LiteralPath $Root)) {
+        return
     }
 
-    $Profiles = @($Profiles | Sort-Object -Unique)
+    $Keys = @(Get-ChildItem -LiteralPath $Root -ErrorAction SilentlyContinue)
 
-    foreach ($Profile in $Profiles) {
-        $Path = Join-Path $Profile 'AppData\Local\Mozilla Firefox\firefox.exe'
+    foreach ($Key in $Keys) {
 
-        if (Test-Path -LiteralPath $Path) {
-            $File = Get-Item -LiteralPath $Path
-            $Results += [PSCustomObject]@{
-                Type = 'USER'
-                Source = 'FILE'
-                Version = $File.VersionInfo.ProductVersion
-                Location = $Path
-            }
-            Write-Host 'FOUND:' $Path -ForegroundColor Red
+        $App = Get-ItemProperty -LiteralPath $Key.PSPath -ErrorAction SilentlyContinue
+
+        if ($null -eq $App) {
+            continue
         }
-    }
 
-    # 3 - PER MACHINE REGISTRY
+        if ($App.DisplayName -notlike 'Mozilla Firefox*') {
+            continue
+        }
 
-    Write-Host ''
-    Write-Host '[3] PER MACHINE - REGISTRY' -ForegroundColor Yellow
+        $Status = 'REGISTRY ONLY'
+        $ExePath = $null
 
-    $MachineRoots = @(
-        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\
+        if (-not [string]::IsNullOrWhiteSpace($App.InstallLocation)) {
+
+            $InstallDir = [Environment]::ExpandEnvironmentVariables($App.InstallLocation)
+            $ExePath = Join-Path $InstallDir 'firefox.exe'
+
+        }
+        elseif ($Type -eq 'USER' -and -not [string]::IsNullOrWhiteSpace($ProfilePath)) {
+
+            $ExePath = Join-Path $ProfilePath 'AppData\Local\Mozilla Firefox\firefox.exe'
+
+        }
+
+        if ($ExePath) {
+
+            if (Test-Path -LiteralPath $ExePath) {
+                $Status = 'EXECUTABLE FOUND'
+            }
+            else {
+                $Status = 'STALE OR NONSTANDARD'
+            }
+
+        }
+
+        Add-Result -Type $Type -Source 'REGISTRY' -Version $App.DisplayVersion -Status $Status -Location $Key.Name -Details $ExePath
+
+        if ($Type -eq 'USER') {
+            Write-Host 'FOUND
