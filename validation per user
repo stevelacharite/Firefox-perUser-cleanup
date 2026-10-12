@@ -1,115 +1,147 @@
-# FIREFOX INSTALLATION CHECK V1.3
-# Compatible PowerShell 5.1
-# Lecture seule - Copier/coller direct
+# FIREFOX INSTALLATION CHECK V1.4
+# Windows PowerShell 5.1
+# READ ONLY
 
 $ErrorActionPreference = 'Continue'
 $Results = @()
 
 Write-Host ''
-Write-Host '===== FIREFOX INSTALLATION CHECK V1.3 =====' -ForegroundColor Cyan
+Write-Host '===== FIREFOX CHECK V1.4 =====' -ForegroundColor Cyan
 
-# 1 - FICHIERS PER-MACHINE
+# 1 - PER MACHINE FILES
 
-Write-Host ''
-Write-Host '[1] Fichiers PER-MACHINE' -ForegroundColor Yellow
+Write-Host '[1] PER MACHINE FILES' -ForegroundColor Yellow
 
-$MachinePaths = @(
+$Paths = @(
     'C:\Program Files\Mozilla Firefox\firefox.exe'
     'C:\Program Files (x86)\Mozilla Firefox\firefox.exe'
 )
 
-foreach ($Path in $MachinePaths) {
+foreach ($Path in $Paths) {
     if (Test-Path -LiteralPath $Path) {
-        $Version = (Get-Item -LiteralPath $Path).VersionInfo.ProductVersion
-        $Results += [PSCustomObject]@{ Type='PER-MACHINE'; Source='Fichier'; Version=$Version; Path=$Path }
-        Write-Host "TROUVE : $Path [$Version]" -ForegroundColor Green
+        $Ver = (Get-Item -LiteralPath $Path).VersionInfo.ProductVersion
+        $Results += [PSCustomObject]@{
+            Type = 'MACHINE'
+            Source = 'FILE'
+            Version = $Ver
+            Location = $Path
+        }
+        Write-Host 'FOUND:' $Path -ForegroundColor Green
     }
 }
 
-# 2 - FICHIERS PER-USER
+# 2 - PER USER FILES
 
-Write-Host ''
-Write-Host '[2] Fichiers PER-USER' -ForegroundColor Yellow
+Write-Host '[2] PER USER FILES' -ForegroundColor Yellow
 
 $ProfileRoot = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList'
 
-$Profiles = @(Get-ChildItem -Path $ProfileRoot -ErrorAction SilentlyContinue | ForEach-Object {
-    $Info = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue
-    if ($Info.ProfileImagePath) {
-        [Environment]::ExpandEnvironmentVariables($Info.ProfileImagePath)
-    }
-} | Sort-Object -Unique)
+foreach ($Key in (Get-ChildItem -LiteralPath $ProfileRoot -ErrorAction SilentlyContinue)) {
+    $Info = Get-ItemProperty -LiteralPath $Key.PSPath -ErrorAction SilentlyContinue
 
-foreach ($Profile in $Profiles) {
-    $Path = Join-Path $Profile 'AppData\Local\Mozilla Firefox\firefox.exe'
-    if (Test-Path -LiteralPath $Path) {
-        $Version = (Get-Item -LiteralPath $Path).VersionInfo.ProductVersion
-        $Results += [PSCustomObject]@{ Type='PER-USER'; Source='Fichier'; Version=$Version; Path=$Path }
-        Write-Host "TROUVE : $Path [$Version]" -ForegroundColor Red
+    if ($null -ne $Info -and $Info.ProfileImagePath) {
+        $Profile = [Environment]::ExpandEnvironmentVariables($Info.ProfileImagePath)
+        $Path = Join-Path $Profile 'AppData\Local\Mozilla Firefox\firefox.exe'
+
+        if (Test-Path -LiteralPath $Path) {
+            $Ver = (Get-Item -LiteralPath $Path).VersionInfo.ProductVersion
+            $Results += [PSCustomObject]@{
+                Type = 'USER'
+                Source = 'FILE'
+                Version = $Ver
+                Location = $Path
+            }
+            Write-Host 'FOUND:' $Path -ForegroundColor Red
+        }
     }
 }
 
-# 3 - REGISTRE PER-MACHINE
+# 3 - PER MACHINE REGISTRY
 
-Write-Host ''
-Write-Host '[3] Registre PER-MACHINE' -ForegroundColor Yellow
+Write-Host '[3] PER MACHINE REGISTRY' -ForegroundColor Yellow
 
-$MachineReg = @(
+$Roots = @(
     'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
 )
 
-foreach ($Root in $MachineReg) {
-    foreach ($Key in @(Get-ChildItem -LiteralPath $Root -ErrorAction SilentlyContinue)) {
+foreach ($Root in $Roots) {
+    foreach ($Key in (Get-ChildItem -LiteralPath $Root -ErrorAction SilentlyContinue)) {
         $App = Get-ItemProperty -LiteralPath $Key.PSPath -ErrorAction SilentlyContinue
-        if ($null -ne $App -and $App.DisplayName -match '^Mozilla Firefox') {
-            $Results += [PSCustomObject]@{ Type='PER-MACHINE'; Source='Registre'; Version=$App.DisplayVersion; Path=$Key.Name }
-            Write-Host "TROUVE : $($App.DisplayName) [$($App.DisplayVersion)]" -ForegroundColor Green
+
+        if ($null -ne $App) {
+            if ($App.DisplayName -like 'Mozilla Firefox*') {
+                $Results += [PSCustomObject]@{
+                    Type = 'MACHINE'
+                    Source = 'REGISTRY'
+                    Version = $App.DisplayVersion
+                    Location = $Key.Name
+                }
+                Write-Host 'FOUND:' $App.DisplayName -ForegroundColor Green
+            }
         }
     }
 }
 
-# 4 - REGISTRE PER-USER
+# 4 - PER USER REGISTRY
 
-Write-Host ''
-Write-Host '[4] Registre PER-USER' -ForegroundColor Yellow
+Write-Host '[4] PER USER REGISTRY' -ForegroundColor Yellow
 
-$Hives = @(Get-ChildItem -Path 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^S-1-5-21-\d+-\d+-\d+-\d+$' })
+$Hives = Get-ChildItem -LiteralPath 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue
 
 foreach ($Hive in $Hives) {
     $SID = $Hive.PSChildName
-    $Root = 'Registry::HKEY_USERS\' + $SID + '\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 
-    foreach ($Key in @(Get-ChildItem -LiteralPath $Root -ErrorAction SilentlyContinue)) {
-        $App = Get-ItemProperty -LiteralPath $Key.PSPath -ErrorAction SilentlyContinue
-        if ($null -ne $App -and $App.DisplayName -match '^Mozilla Firefox') {
-            $Results += [PSCustomObject]@{ Type='PER-USER'; Source='Registre'; Version=$App.DisplayVersion; Path=$Key.Name }
-            Write-Host "TROUVE : $($App.DisplayName) [$SID]" -ForegroundColor Red
+    if ($SID -match '^S-1-5-21-\d+-\d+-\d+-\d+$') {
+        $Root = 'Registry::HKEY_USERS\' + $SID + '\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+
+        foreach ($Key in (Get-ChildItem -LiteralPath $Root -ErrorAction SilentlyContinue)) {
+            $App = Get-ItemProperty -LiteralPath $Key.PSPath -ErrorAction SilentlyContinue
+
+            if ($null -ne $App) {
+                if ($App.DisplayName -like 'Mozilla Firefox*') {
+                    $Results += [PSCustomObject]@{
+                        Type = 'USER'
+                        Source = 'REGISTRY'
+                        Version = $App.DisplayVersion
+                        Location = $Key.Name
+                    }
+                    Write-Host 'FOUND:' $App.DisplayName -ForegroundColor Red
+                }
+            }
         }
     }
 }
 
-# 5 - RESULTATS
+# 5 - RESULTS
 
 Write-Host ''
-Write-Host '===== RESULTATS DETAILLES =====' -ForegroundColor Cyan
+Write-Host '===== DETAILS =====' -ForegroundColor Cyan
 
-if ($Results.Count -gt 0) {
-    $Results | Format-Table Type,Source,Version,Path -AutoSize -Wrap
-} else {
-    Write-Host 'Aucune installation Firefox detectee.' -ForegroundColor Yellow
+$Results | Format-Table Type, Source, Version, Location -AutoSize -Wrap
+
+# 6 - SUMMARY
+
+$MF = @($Results | Where-Object { $_.Type -eq 'MACHINE' -and $_.Source -eq 'FILE' }).Count
+$MR = @($Results | Where-Object { $_.Type -eq 'MACHINE' -and $_.Source -eq 'REGISTRY' }).Count
+$UF = @($Results | Where-Object { $_.Type -eq 'USER' -and $_.Source -eq 'FILE' }).Count
+$UR = @($Results | Where-Object { $_.Type -eq 'USER' -and $_.Source -eq 'REGISTRY' }).Count
+
+Write-Host ''
+Write-Host '===== SUMMARY =====' -ForegroundColor Cyan
+
+Write-Host 'Machine files   :' $MF
+Write-Host 'Machine registry:' $MR
+Write-Host 'User files      :' $UF
+Write-Host 'User registry   :' $UR
+
+Write-Host ''
+
+if (($UF -gt 0) -or ($UR -gt 0)) {
+    Write-Host 'WARNING: PER USER DETECTED' -ForegroundColor Red
 }
-
-# 6 - SOMMAIRE
-
-$MachineFiles = @($Results | Where-Object { $_.Type -eq 'PER-MACHINE' -and $_.Source -eq 'Fichier' }).Count
-$MachineRegCount = @($Results | Where-Object { $_.Type -eq 'PER-MACHINE' -and $_.Source -eq 'Registre' }).Count
-$UserFiles = @($Results | Where-Object { $_.Type -eq 'PER-USER' -and $_.Source -eq 'Fichier' }).Count
-$UserRegCount = @($Results | Where-Object { $_.Type -eq 'PER-USER' -and $_.Source -eq 'Registre' }).Count
-
-Write-Host ''
-Write-Host '===== SOMMAIRE =====' -ForegroundColor Cyan
-Write-Host "PER-MACHINE - Fichiers : $MachineFiles"
-Write-Host "PER-MACHINE - Registre : $MachineRegCount"
-Write-Host "PER-USER    - Fichiers : $UserFiles"
-Write-Host "PER-USER    -
+elseif ($MF -gt 0) {
+    Write-Host 'OK: PER MACHINE ONLY IN CHECKED LOCATIONS' -ForegroundColor Green
+}
+elseif ($MR -gt 0) {
+    Write-Host 'WARNING: MACHINE REGISTRY ENTRY WITHOUT
