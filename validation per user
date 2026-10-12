@@ -1,36 +1,188 @@
-# 4. INSTALLATIONS PER-USER - REGISTRE
+#Requires -Version 5.1
 
-Write-Host "`n[4] Verification du registre PER-USER" -ForegroundColor Yellow
+# ============================================================
+# FIREFOX INSTALLATION CHECK V1.2
+# ============================================================
+# Lecture seule
+# Windows 10 / 11 / Server 2016-2025
+#
+# Verifications :
+#  1. Installations PER-MACHINE (fichiers)
+#  2. Installations PER-USER (fichiers)
+#  3. Registre PER-MACHINE
+#  4. Registre PER-USER (ruches chargees)
+#  5. Detection des references obsoletes
+#  6. Sommaire
+#
+# Rapport : C:\Install\Firefox\Firefox-Check.txt
+# ============================================================
 
-$UserHives = Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue |
-    Where-Object {
-        $_.PSChildName -match '^S-1-5-21-\d+-\d+-\d+-\d+$'
+$ErrorActionPreference = 'Continue'
+
+$Version = '1.2'
+$Root = 'C:\Install\Firefox'
+$Report = Join-Path $Root 'Firefox-Check.txt'
+
+New-Item -Path $Root -ItemType Directory -Force |
+    Out-Null
+
+$Results = New-Object System.Collections.ArrayList
+
+function Add-FirefoxResult {
+
+    param(
+        [string]$Type,
+        [string]$Source,
+        [string]$Version,
+        [string]$Path,
+        [string]$Status
+    )
+
+    $Item = [PSCustomObject]@{
+        Type    = $Type
+        Source  = $Source
+        Version = $Version
+        Status  = $Status
+        Path    = $Path
     }
 
-foreach ($Hive in $UserHives) {
+    [void]$Results.Add($Item)
+}
 
-    $SID = $Hive.PSChildName
+function Get-FirefoxVersion {
 
-    $RegPath = "Registry::HKEY_USERS\$SID\Software\Microsoft\Windows\CurrentVersion\Uninstall"
+    param(
+        [string]$FilePath
+    )
 
-    if (-not (Test-Path $RegPath)) {
-        continue
+    try {
+        $File = Get-Item -LiteralPath $FilePath `
+            -ErrorAction Stop
+
+        return $File.VersionInfo.ProductVersion
     }
-
-    foreach ($Entry in (Get-ChildItem $RegPath -ErrorAction SilentlyContinue)) {
-
-        $App = Get-ItemProperty -LiteralPath $Entry.PSPath -ErrorAction SilentlyContinue
-
-        if ($App.DisplayName -match '^Mozilla Firefox(?:\s|$)') {
-
-            $Results += [PSCustomObject]@{
-                Type    = 'PER-USER'
-                Source  = 'Registre'
-                Version = $App.DisplayVersion
-                Path    = $Entry.PSPath
-            }
-
-            Write-Host "TROUVE : $($App.DisplayName) [$SID]" -ForegroundColor Red
-        }
+    catch {
+        return 'Inconnue'
     }
 }
+
+function Test-FirefoxRegistry {
+
+    param(
+        [string]$RegistryPath,
+        [string]$InstallType
+    )
+
+    if (-not (Test-Path -LiteralPath $RegistryPath)) {
+        return
+    }
+
+    $Entries = Get-ChildItem -LiteralPath $RegistryPath `
+        -ErrorAction SilentlyContinue
+
+    foreach ($Entry in $Entries) {
+
+        $App = Get-ItemProperty -LiteralPath $Entry.PSPath `
+            -ErrorAction SilentlyContinue
+
+        if ($null -eq $App) {
+            continue
+        }
+
+        if ($App.DisplayName -notmatch '^Mozilla Firefox(?:\s|$)') {
+            continue
+        }
+
+        $Version = $App.DisplayVersion
+
+        $Status = 'REFERENCE REGISTRE'
+
+        if ($App.InstallLocation) {
+
+            $Executable = Join-Path $App.InstallLocation `
+                'firefox.exe'
+
+            if (Test-Path -LiteralPath $Executable) {
+                $Status = 'FICHIER PRESENT'
+            }
+            else {
+                $Status = 'EMPLACEMENT ABSENT'
+            }
+        }
+
+        Add-FirefoxResult `
+            -Type $InstallType `
+            -Source 'Registre' `
+            -Version $Version `
+            -Path $Entry.PSPath `
+            -Status $Status
+
+        Write-Host "  $($App.DisplayName) - $Version" `
+            -ForegroundColor Cyan
+
+        Write-Host "  Etat : $Status"
+    }
+}
+
+# ============================================================
+# BANNIERE
+# ============================================================
+
+Write-Host ''
+Write-Host '==================================================' `
+    -ForegroundColor Cyan
+Write-Host "       FIREFOX INSTALLATION CHECK V$Version" `
+    -ForegroundColor Cyan
+Write-Host '==================================================' `
+    -ForegroundColor Cyan
+
+# ============================================================
+# 1. PER-MACHINE - FICHIERS
+# ============================================================
+
+Write-Host ''
+Write-Host '[1] Installations PER-MACHINE - Fichiers' `
+    -ForegroundColor Yellow
+
+$MachinePaths = @()
+
+if ($env:ProgramFiles) {
+    $MachinePaths += Join-Path $env:ProgramFiles `
+        'Mozilla Firefox\firefox.exe'
+}
+
+$ProgramFilesX86 = [Environment]::GetEnvironmentVariable(
+    'ProgramFiles(x86)'
+)
+
+if ($ProgramFilesX86) {
+    $MachinePaths += Join-Path $ProgramFilesX86 `
+        'Mozilla Firefox\firefox.exe'
+}
+
+$MachinePaths = @($MachinePaths | Select-Object -Unique)
+
+foreach ($Path in $MachinePaths) {
+
+    if (Test-Path -LiteralPath $Path) {
+
+        $FirefoxVersion = Get-FirefoxVersion -FilePath $Path
+
+        Add-FirefoxResult `
+            -Type 'PER-MACHINE' `
+            -Source 'Fichier' `
+            -Version $FirefoxVersion `
+            -Path $Path `
+            -Status 'INSTALLE'
+
+        Write-Host "  TROUVE : $Path" -ForegroundColor Green
+        Write-Host "  Version : $FirefoxVersion"
+    }
+}
+
+# ============================================================
+# 2. PER-USER - FICHIERS
+# ============================================================
+
+Write-Host ''
+Write-Host '[2]
