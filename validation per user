@@ -1,0 +1,89 @@
+# Firefox Installation Check V1.0
+# Read-only - Windows 10/11 et Server 2016-2025
+
+Write-Host "`n=== FIREFOX INSTALLATION CHECK ===" -ForegroundColor Cyan
+
+$Results = @()
+
+# 1. Installations per-machine
+$MachinePaths = @(
+    "$env:ProgramFiles\Mozilla Firefox\firefox.exe",
+    "${env:ProgramFiles(x86)}\Mozilla Firefox\firefox.exe"
+)
+
+foreach ($Path in $MachinePaths) {
+    if ($Path -and (Test-Path -LiteralPath $Path)) {
+        $Results += [PSCustomObject]@{
+            Type    = 'PER-MACHINE'
+            Source  = 'Fichier'
+            Version = (Get-Item -LiteralPath $Path).VersionInfo.ProductVersion
+            Path    = $Path
+        }
+    }
+}
+
+# 2. Installations per-user (tous les profils locaux)
+Get-ChildItem 'C:\Users' -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+
+    $UserPath = Join-Path $_.FullName 'AppData\Local\Mozilla Firefox\firefox.exe'
+
+    if (Test-Path -LiteralPath $UserPath) {
+        $Results += [PSCustomObject]@{
+            Type    = 'PER-USER'
+            Source  = 'Fichier'
+            Version = (Get-Item -LiteralPath $UserPath).VersionInfo.ProductVersion
+            Path    = $UserPath
+        }
+    }
+}
+
+# 3. Registre per-machine et per-user (ruches chargees)
+$RegPaths = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+)
+
+Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue |
+Where-Object { $_.PSChildName -match '^S-1-5-21-.*-\d+$' } |
+ForEach-Object {
+    $RegPaths += "Registry::HKEY_USERS\$($_.PSChildName)\Software\Microsoft\Windows\CurrentVersion\Uninstall"
+}
+
+foreach ($RegPath in $RegPaths) {
+    if (-not (Test-Path $RegPath)) { continue }
+
+    Get-ChildItem $RegPath -ErrorAction SilentlyContinue | ForEach-Object {
+        $App = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+
+        if ($App.DisplayName -match '^Mozilla Firefox') {
+            $Type = if ($RegPath -like 'HKLM:*') { 'PER-MACHINE' } else { 'PER-USER' }
+
+            $Results += [PSCustomObject]@{
+                Type    = $Type
+                Source  = 'Registre'
+                Version = $App.DisplayVersion
+                Path    = $_.PSPath
+            }
+        }
+    }
+}
+
+# 4. Resultats
+Write-Host "`n=== RESULTATS ===" -ForegroundColor Cyan
+
+if ($Results.Count -eq 0) {
+    Write-Host "Aucune installation Firefox detectee." -ForegroundColor Green
+}
+else {
+    $Results | Sort-Object Type, Source | Format-Table -AutoSize -Wrap
+}
+
+Write-Host "`n=== SOMMAIRE ===" -ForegroundColor Cyan
+
+$Machine = @($Results | Where-Object Type -eq 'PER-MACHINE').Count
+$User    = @($Results | Where-Object Type -eq 'PER-USER').Count
+
+Write-Host "Per-machine : $Machine entree(s)"
+Write-Host "Per-user    : $User entree(s)"
+
+if ($Machine -gt 0 -and $User -
