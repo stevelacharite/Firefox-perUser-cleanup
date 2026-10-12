@@ -1,0 +1,125 @@
+#Requires -RunAsAdministrator
+# Firefox - Complete Installation Cleanup V1.0
+# Preserve user profiles and data
+# Windows 10/11 - Windows Server 2016-2025
+
+$ErrorActionPreference = 'Continue'
+$Root = 'C:\Install\Firefox'
+$Log = Join-Path $Root 'Uninstall.log'
+
+New-Item -Path $Root -ItemType Directory -Force | Out-Null
+Start-Transcript -Path $Log -Append | Out-Null
+
+Write-Host "`n=== FIREFOX CLEANUP V1.0 ===" -ForegroundColor Cyan
+
+function Invoke-FirefoxUninstaller {
+    param([string]$InstallDir)
+
+    $Helper = Join-Path $InstallDir 'uninstall\helper.exe'
+
+    if (Test-Path $Helper) {
+        Write-Host "Uninstalling: $InstallDir" -ForegroundColor Yellow
+        try {
+            $Process = Start-Process -FilePath $Helper `
+                -ArgumentList '/S' -Wait -PassThru
+            Write-Host "Uninstaller exit code: $($Process.ExitCode)"
+        }
+        catch {
+            Write-Warning "Uninstaller failed: $_"
+        }
+    }
+}
+
+# 1. Stop Firefox
+Write-Host "`n[1] Stop Firefox processes"
+Get-Process firefox -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+
+# 2. Locate standard installation folders
+Write-Host "`n[2] Detect Firefox installations"
+
+$InstallDirs = @(
+    "$env:ProgramFiles\Mozilla Firefox",
+    "${env:ProgramFiles(x86)}\Mozilla Firefox"
+)
+
+$UsersRoot = 'C:\Users'
+
+Get-ChildItem $UsersRoot -Directory -ErrorAction SilentlyContinue |
+    ForEach-Object {
+        $InstallDirs += Join-Path $_.FullName 'AppData\Local\Mozilla Firefox'
+    }
+
+$InstallDirs = $InstallDirs |
+    Where-Object { $_ -and (Test-Path $_) } |
+    Select-Object -Unique
+
+foreach ($Dir in $InstallDirs) {
+    Write-Host "Found: $Dir"
+}
+
+# 3. Run Mozilla uninstallers
+Write-Host "`n[3] Run Mozilla uninstallers"
+foreach ($Dir in $InstallDirs) {
+    Invoke-FirefoxUninstaller -InstallDir $Dir
+}
+
+# 4. Remove remaining installation folders
+Write-Host "`n[4] Remove remaining Firefox installation folders"
+
+foreach ($Dir in $InstallDirs) {
+    if (Test-Path $Dir) {
+        try {
+            Remove-Item -LiteralPath $Dir -Recurse -Force -ErrorAction Stop
+            Write-Host "Removed: $Dir" -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "Unable to remove $Dir : $_"
+        }
+    }
+}
+
+# 5. Remove obsolete uninstall entries
+Write-Host "`n[5] Clean obsolete Firefox uninstall entries"
+
+$RegistryRoots = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+)
+
+foreach ($SID in (Get-ChildItem Registry::HKEY_USERS -ErrorAction SilentlyContinue)) {
+    $RegistryRoots += "Registry::$($SID.Name)\Software\Microsoft\Windows\CurrentVersion\Uninstall"
+}
+
+foreach ($RegistryRoot in $RegistryRoots) {
+    if (-not (Test-Path $RegistryRoot)) { continue }
+
+    Get-ChildItem $RegistryRoot -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            $Item = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+
+            if ($Item.DisplayName -match '^Mozilla Firefox') {
+                Write-Host "Removing registry entry: $($Item.DisplayName)"
+                Remove-Item $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+}
+
+# 6. Final validation
+Write-Host "`n[6] Final validation" -ForegroundColor Cyan
+
+$Remaining = @($InstallDirs | Where-Object { Test-Path $_ })
+
+if ($Remaining.Count -eq 0) {
+    Write-Host "SUCCESS: Firefox installation folders removed." -ForegroundColor Green
+}
+else {
+    Write-Warning "Some Firefox folders remain:"
+    $Remaining | ForEach-Object { Write-Host $_ }
+}
+
+Write-Host "`nUser profiles under AppData\Roaming\Mozilla\Firefox were preserved."
+Write-Host "Log: $Log"
+
+Stop-Transcript | Out-Null
+Read-Host "`nPress Enter to close"
