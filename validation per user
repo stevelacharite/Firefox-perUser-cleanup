@@ -1,134 +1,10 @@
-#Requires -Version 5.1
-
-# ============================================================
-# FIREFOX INSTALLATION CHECK V1.1
-# Read-only / Lecture seule
-# Windows 10/11 - Windows Server 2016-2025
-# ============================================================
-
-$ErrorActionPreference = 'Continue'
-
-$Results = @()
-
-Write-Host ""
-Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host "       FIREFOX INSTALLATION CHECK V1.1       " -ForegroundColor Cyan
-Write-Host "=============================================" -ForegroundColor Cyan
-
-# ============================================================
-# 1. INSTALLATIONS PER-MACHINE - FICHIERS
-# ============================================================
-
-Write-Host "`n[1] Verification des installations PER-MACHINE" -ForegroundColor Yellow
-
-$MachinePaths = @(
-    "$env:ProgramFiles\Mozilla Firefox\firefox.exe",
-    "${env:ProgramFiles(x86)}\Mozilla Firefox\firefox.exe"
-)
-
-foreach ($Path in $MachinePaths) {
-
-    if ([string]::IsNullOrWhiteSpace($Path)) {
-        continue
-    }
-
-    if (Test-Path -LiteralPath $Path) {
-
-        $File = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
-
-        $Results += [PSCustomObject]@{
-            Type    = 'PER-MACHINE'
-            Source  = 'Fichier'
-            Version = $File.VersionInfo.ProductVersion
-            Path    = $Path
-        }
-
-        Write-Host "TROUVE : $Path" -ForegroundColor Green
-    }
-}
-
-# ============================================================
-# 2. INSTALLATIONS PER-USER - FICHIERS
-# ============================================================
-
-Write-Host "`n[2] Verification des installations PER-USER" -ForegroundColor Yellow
-
-$UsersRoot = Join-Path $env:SystemDrive 'Users'
-
-if (Test-Path $UsersRoot) {
-
-    $Profiles = Get-ChildItem -LiteralPath $UsersRoot `
-        -Directory -Force -ErrorAction SilentlyContinue
-
-    foreach ($Profile in $Profiles) {
-
-        $UserPath = Join-Path $Profile.FullName `
-            'AppData\Local\Mozilla Firefox\firefox.exe'
-
-        if (Test-Path -LiteralPath $UserPath) {
-
-            $File = Get-Item -LiteralPath $UserPath -ErrorAction SilentlyContinue
-
-            $Results += [PSCustomObject]@{
-                Type    = 'PER-USER'
-                Source  = 'Fichier'
-                Version = $File.VersionInfo.ProductVersion
-                Path    = $UserPath
-            }
-
-            Write-Host "TROUVE : $UserPath" -ForegroundColor Red
-        }
-    }
-}
-
-# ============================================================
-# 3. INSTALLATIONS PER-MACHINE - REGISTRE
-# ============================================================
-
-Write-Host "`n[3] Verification du registre PER-MACHINE" -ForegroundColor Yellow
-
-$MachineRegPaths = @(
-    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
-    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
-)
-
-foreach ($RegPath in $MachineRegPaths) {
-
-    if (-not (Test-Path $RegPath)) {
-        continue
-    }
-
-    $Entries = Get-ChildItem -Path $RegPath -ErrorAction SilentlyContinue
-
-    foreach ($Entry in $Entries) {
-
-        $App = Get-ItemProperty -LiteralPath $Entry.PSPath `
-            -ErrorAction SilentlyContinue
-
-        if ($App.DisplayName -match '^Mozilla Firefox(?:\s|$)') {
-
-            $Results += [PSCustomObject]@{
-                Type    = 'PER-MACHINE'
-                Source  = 'Registre'
-                Version = $App.DisplayVersion
-                Path    = $Entry.PSPath
-            }
-
-            Write-Host "TROUVE : $($App.DisplayName)" -ForegroundColor Green
-        }
-    }
-}
-
-# ============================================================
 # 4. INSTALLATIONS PER-USER - REGISTRE
-# ============================================================
 
 Write-Host "`n[4] Verification du registre PER-USER" -ForegroundColor Yellow
 
-$UserHives = Get-ChildItem 'Registry::HKEY_USERS' `
-    -ErrorAction SilentlyContinue |
+$UserHives = Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue |
     Where-Object {
-        $_.PSChildName -match '^S-1-5-21-(\d+-){3}\d+$'
+        $_.PSChildName -match '^S-1-5-21-\d+-\d+-\d+-\d+$'
     }
 
 foreach ($Hive in $UserHives) {
@@ -138,3 +14,23 @@ foreach ($Hive in $UserHives) {
     $RegPath = "Registry::HKEY_USERS\$SID\Software\Microsoft\Windows\CurrentVersion\Uninstall"
 
     if (-not (Test-Path $RegPath)) {
+        continue
+    }
+
+    foreach ($Entry in (Get-ChildItem $RegPath -ErrorAction SilentlyContinue)) {
+
+        $App = Get-ItemProperty -LiteralPath $Entry.PSPath -ErrorAction SilentlyContinue
+
+        if ($App.DisplayName -match '^Mozilla Firefox(?:\s|$)') {
+
+            $Results += [PSCustomObject]@{
+                Type    = 'PER-USER'
+                Source  = 'Registre'
+                Version = $App.DisplayVersion
+                Path    = $Entry.PSPath
+            }
+
+            Write-Host "TROUVE : $($App.DisplayName) [$SID]" -ForegroundColor Red
+        }
+    }
+}
